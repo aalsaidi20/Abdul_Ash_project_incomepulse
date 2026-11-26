@@ -38,6 +38,8 @@ class StockSnapshot:
     history: pd.DataFrame
     is_live: bool = True
     source_note: str = "Live Yahoo Finance"
+    fetched_at_et: str = ""
+    last_bar_label: str = ""
 
 
 @dataclass
@@ -49,6 +51,17 @@ class OptionChainData:
     puts: pd.DataFrame
     is_live: bool = True
     available_expirations: List[str] = field(default_factory=list)
+
+
+def _now_et_label() -> str:
+    """Format current timestamp in US Eastern (Market) Time."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        now_et = dt.datetime.now(ZoneInfo("America/New_York"))
+        return now_et.strftime("%b %d, %I:%M %p ET")
+    except Exception:
+        return dt.datetime.now().strftime("%b %d, %I:%M %p")
 
 
 def _compute_rsi(close: pd.Series, window: int = 14) -> pd.Series:
@@ -236,6 +249,9 @@ def fetch_stock_snapshot(symbol: str, period: str = "1y") -> StockSnapshot:
     sma_20 = float(close.rolling(20).mean().iloc[-1]) if len(close) >= 20 else price
     sma_50 = float(close.rolling(50).mean().iloc[-1]) if len(close) >= 50 else sma_20
 
+    last_ts = pd.Timestamp(hist.index[-1])
+    last_bar_label = last_ts.strftime("%b %d, %Y")
+
     return StockSnapshot(
         symbol=sym,
         name=name,
@@ -255,6 +271,8 @@ def fetch_stock_snapshot(symbol: str, period: str = "1y") -> StockSnapshot:
         history=hist,
         is_live=is_live,
         source_note="Live Yahoo Finance (Free)" if is_live else "Offline Simulated Fallback",
+        fetched_at_et=_now_et_label(),
+        last_bar_label=last_bar_label,
     )
 
 

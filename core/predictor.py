@@ -35,6 +35,15 @@ class MarketPrediction:
     forecast_mid: List[float]
     forecast_upper: List[float]
     forecast_lower: List[float]
+    # Current trend vs. News+AI future trend comparison
+    current_trend_label: str       # "Uptrend", "Sideways", "Downtrend"
+    current_trend_color: str
+    current_trend_pct_20d: float
+    current_trend_dates: List[str]
+    current_trend_line: List[float]
+    forecast_tech_only: List[float]
+    news_impact_pct: float         # How much live news shifted the predicted return (%)
+    news_sentiment_used: float
 
 
 def _build_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -156,8 +165,31 @@ def predict_stock_movement(
     t_years = max(horizon_days, 1) / 365.0
     one_sigma_move = eff_vol * math.sqrt(t_years)
 
-    pred_ret = float(np.clip(pred_ret * 0.55 + news_sentiment * 0.008, -0.8 * one_sigma_move, 0.8 * one_sigma_move))
+    tech_ret = float(np.clip(pred_ret * 0.55, -0.8 * one_sigma_move, 0.8 * one_sigma_move))
+    news_shift = float(np.clip(news_sentiment * 0.014, -0.35 * one_sigma_move, 0.35 * one_sigma_move))
+    pred_ret = float(np.clip(tech_ret + news_shift, -0.85 * one_sigma_move, 0.85 * one_sigma_move))
     predicted_price = round(spot * (1.0 + pred_ret), 2)
+
+    # Current 20-day actual trend (linear regression fit + 20-day % return)
+    recent_20 = close.tail(min(20, len(close)))
+    pct_20d = ((float(recent_20.iloc[-1]) - float(recent_20.iloc[0])) / max(float(recent_20.iloc[0]), 1e-4)) * 100.0
+    x_idx = np.arange(len(recent_20), dtype=float)
+    if len(recent_20) >= 2:
+        slope, intercept = np.polyfit(x_idx, recent_20.values.astype(float), 1)
+        trend_line = [round(float(intercept + slope * x), 2) for x in x_idx]
+    else:
+        trend_line = [round(spot, 2)]
+    trend_dates = [pd.Timestamp(d).strftime("%Y-%m-%d") for d in recent_20.index]
+
+    if pct_20d >= 2.0 and spot >= snapshot.sma_20:
+        current_trend_label = "Uptrend"
+        current_trend_color = "#00D4AA"
+    elif pct_20d <= -2.0 and spot <= snapshot.sma_20:
+        current_trend_label = "Downtrend"
+        current_trend_color = "#EF4444"
+    else:
+        current_trend_label = "Sideways / Choppy"
+        current_trend_color = "#38BDF8"
 
     low_1s = round(max(0.5, predicted_price * (1.0 - one_sigma_move)), 2)
     high_1s = round(predicted_price * (1.0 + one_sigma_move), 2)
@@ -225,13 +257,16 @@ def predict_stock_movement(
     future_dates = pd.bdate_range(start=last_date + pd.Timedelta(days=1), periods=n_steps)
     forecast_dates = [last_date.strftime("%Y-%m-%d")] + [d.strftime("%Y-%m-%d") for d in future_dates]
     forecast_mid = [spot]
+    forecast_tech_only = [spot]
     forecast_upper = [spot]
     forecast_lower = [spot]
     for i in range(1, n_steps + 1):
         frac = i / float(n_steps)
         mid_i = spot * (1.0 + pred_ret * frac)
+        tech_i = spot * (1.0 + tech_ret * frac)
         band_i = spot * one_sigma_move * math.sqrt(frac)
         forecast_mid.append(round(mid_i, 2))
+        forecast_tech_only.append(round(tech_i, 2))
         forecast_upper.append(round(mid_i + band_i, 2))
         forecast_lower.append(round(max(0.5, mid_i - band_i), 2))
 
@@ -257,4 +292,12 @@ def predict_stock_movement(
         forecast_mid=forecast_mid,
         forecast_upper=forecast_upper,
         forecast_lower=forecast_lower,
+        current_trend_label=current_trend_label,
+        current_trend_color=current_trend_color,
+        current_trend_pct_20d=round(pct_20d, 2),
+        current_trend_dates=trend_dates,
+        current_trend_line=trend_line,
+        forecast_tech_only=forecast_tech_only,
+        news_impact_pct=round(news_shift * 100.0, 2),
+        news_sentiment_used=round(news_sentiment, 3),
     )

@@ -38,6 +38,14 @@ STRINGS: Dict[str, Dict[str, str]] = {
         "spinner_scanner": "Scanning liquid daily & weekly option markets...",
         "live_badge": "● LIVE FREE PUBLIC DATA",
         "offline_badge": "● OFFLINE SIMULATED MODE",
+        "prices_updated_pill": "🕒 Prices Updated: {ts} (Last Bar: {bar})",
+        "trend_banner_heading": "📊 Current Trend vs. Predicted Trend (AI + Live News)",
+        "current_trend_lbl": "CURRENT TREND (20D)",
+        "predicted_trend_lbl": "PREDICTED TREND ({dte}D — AI + NEWS)",
+        "news_shift_lbl": "LIVE NEWS IMPACT",
+        "news_push_up": "Positive headlines lifting forecast ({pct:+.2f}%)",
+        "news_push_down": "Cautious headlines weighing on forecast ({pct:+.2f}%)",
+        "news_push_flat": "Headlines balanced — trend driven mainly by price & VIX",
         "market_weather_pill": "Market Weather",
         "hero_sub": (
             "Zero-jargon repetitive option income planner powered by 100% free public market, macro, and live news feeds. "
@@ -196,6 +204,14 @@ STRINGS: Dict[str, Dict[str, str]] = {
         "spinner_scanner": "جاري فحص أفضل فرص الدخل المتكرر في الأسواق عالية السيولة...",
         "live_badge": "● بيانات عامة حية ومجانية",
         "offline_badge": "● وضع المحاكاة (بدون إنترنت)",
+        "prices_updated_pill": "🕒 آخر تحديث للأسعار: {ts} (آخر جلسة: {bar})",
+        "trend_banner_heading": "📊 الاتجاه الحالي مقابل الاتجاه المتوقع (الذكاء الاصطناعي + الأخبار الحية)",
+        "current_trend_lbl": "الاتجاه الحالي (20 يوماً)",
+        "predicted_trend_lbl": "الاتجاه المتوقع ({dte} يوم — AI + الأخبار)",
+        "news_shift_lbl": "تأثير الأخبار الحية",
+        "news_push_up": "الأخبار الإيجابية تدفع التوقع للأعلى ({pct:+.2f}%)",
+        "news_push_down": "الأخبار الحذرة تضغط على التوقع ({pct:+.2f}%)",
+        "news_push_flat": "الأخبار متوازنة — التوقع يعتمد أساساً على حركة السعر و VIX",
         "market_weather_pill": "طقس السوق",
         "hero_sub": (
             "مخطط دخل متكرر من الخيارات بلغة بسيطة بدون تعقيد، يعمل بالكامل على بيانات عامة ومجانية 100%. "
@@ -387,6 +403,12 @@ DIRECTION_AR = {
     "Bullish Lean": "ميل صاعد",
     "Calm / Sideways": "هادئ / عرضي",
     "Cautious / Bearish": "حذر / هابط",
+}
+
+CURRENT_TREND_AR = {
+    "Uptrend": "اتجاه صاعد",
+    "Sideways / Choppy": "اتجاه عرضي / متذبذب",
+    "Downtrend": "اتجاه هابط",
 }
 
 WEATHER_AR = {

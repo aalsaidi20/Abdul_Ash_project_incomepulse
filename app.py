@@ -24,6 +24,7 @@ from ui.charts import (
 )
 from ui.i18n import (
     CATEGORY_AR,
+    CURRENT_TREND_AR,
     DIRECTION_AR,
     SENTIMENT_AR,
     STRATEGY_NAMES_AR,
@@ -106,6 +107,63 @@ def _level_card(css_cls: str, tag: str, big_value: str, sub: str, color: str) ->
         <div class="level-sub">{html.escape(sub)}</div>
     </div>
     """
+
+
+def _render_trend_comparison_section(
+    snapshot: StockSnapshot,
+    prediction: MarketPrediction,
+    pred_t: dict,
+    lang: str,
+    active_plan: OptionStrategyPlan | None = None,
+) -> None:
+    """Render the Current Trend vs. Predicted Trend (AI + Live News) summary banner + interactive plot."""
+    st.markdown(f"#### {tr(lang, 'trend_banner_heading')}")
+    curr_disp = CURRENT_TREND_AR.get(prediction.current_trend_label, prediction.current_trend_label) if lang == "ar" else prediction.current_trend_label
+
+    if prediction.news_impact_pct >= 0.15:
+        news_msg = tr(lang, "news_push_up", pct=prediction.news_impact_pct)
+        news_col = "#00D4AA"
+    elif prediction.news_impact_pct <= -0.15:
+        news_msg = tr(lang, "news_push_down", pct=prediction.news_impact_pct)
+        news_col = "#EF4444"
+    else:
+        news_msg = tr(lang, "news_push_flat")
+        news_col = "#38BDF8"
+
+    tc1, tc2, tc3 = st.columns(3)
+    with tc1:
+        st.markdown(
+            _kpi_card(
+                tr(lang, "current_trend_lbl"),
+                curr_disp,
+                f"20d: {prediction.current_trend_pct_20d:+.2f}% • ${snapshot.price:,.2f}",
+                prediction.current_trend_color,
+            ),
+            unsafe_allow_html=True,
+        )
+    with tc2:
+        st.markdown(
+            _kpi_card(
+                tr(lang, "predicted_trend_lbl", dte=prediction.horizon_days),
+                f"{pred_t['direction']} (${prediction.predicted_price:,.2f})",
+                f"{prediction.expected_return_pct:+.2f}% • {prediction.prob_up*100:.0f}% up odds",
+                prediction.direction_color,
+            ),
+            unsafe_allow_html=True,
+        )
+    with tc3:
+        st.markdown(
+            _kpi_card(
+                tr(lang, "news_shift_lbl"),
+                f"{prediction.news_impact_pct:+.2f}%",
+                news_msg,
+                news_col,
+            ),
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div style='height:0.35rem'></div>", unsafe_allow_html=True)
+    st.plotly_chart(build_forecast_chart(snapshot, prediction, lang=lang, active_plan=active_plan), use_container_width=True)
 
 
 def _open_blueprint(sym: str, strat_id: str) -> None:
@@ -293,6 +351,9 @@ live_badge = (
     if (snapshot.is_live or macro.is_live)
     else f'<span class="pill pill-warn">{html.escape(tr(lang, "offline_badge"))}</span>'
 )
+updated_badge = (
+    f'<span class="pill pill-info">{html.escape(tr(lang, "prices_updated_pill", ts=snapshot.fetched_at_et or "Live", bar=snapshot.last_bar_label or "Latest"))}</span>'
+)
 weather_badge = (
     f'<span class="pill pill-info">{macro.weather_emoji} '
     f'{html.escape(tr(lang, "market_weather_pill"))}: {html.escape(weather_t["label"])}</span>'
@@ -313,7 +374,7 @@ st.markdown(
     <div class="hero-banner">
         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:0.45rem;">
             <div class="hero-title">{html.escape(tr(lang, "app_title"))}</div>
-            <div style="display:flex; gap:8px; flex-wrap:wrap;">{live_badge}{weather_badge}</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">{live_badge}{updated_badge}{weather_badge}</div>
         </div>
         <p class="hero-sub">{hero_sub_html}</p>
     </div>
@@ -699,6 +760,10 @@ elif active_view == "blueprint":
         with p_col2:
             st.plotly_chart(build_income_projection_chart(plan, lang=lang), use_container_width=True)
 
+        # Current Trend vs Predicted Trend (News + AI) plot right inside Blueprint too!
+        st.markdown("<div style='height:0.4rem'></div>", unsafe_allow_html=True)
+        _render_trend_comparison_section(snapshot, prediction, pred_t, lang, active_plan=plan)
+
         with st.expander(tr(lang, "compare_expander")):
             if lang == "ar":
                 comp_df = pd.DataFrame(
@@ -773,7 +838,7 @@ elif active_view == "forecast":
 
     st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
     top_plan = strategies[0] if strategies else None
-    st.plotly_chart(build_forecast_chart(snapshot, prediction, lang=lang, active_plan=top_plan), use_container_width=True)
+    _render_trend_comparison_section(snapshot, prediction, pred_t, lang, active_plan=top_plan)
 
     st.markdown(tr(lang, "why_ai_heading"))
     for drv in pred_t["drivers"]:

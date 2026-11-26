@@ -46,6 +46,7 @@ def test_full_pipeline_and_charts():
 
     snap = fetch_stock_snapshot("SPY", period="1y")
     assert snap.price > 0
+    assert snap.fetched_at_et and snap.last_bar_label
     assert len(snap.history) >= 30
 
     chain = fetch_option_chain("SPY", spot=snap.price, fallback_iv=snap.hist_vol_20d, min_dte=1, max_dte=10, target_dte=7)
@@ -60,7 +61,9 @@ def test_full_pipeline_and_charts():
     assert pred.predicted_price > 0
     assert pred.expected_low_1sigma < pred.expected_high_1sigma
     assert 0.0 < pred.prob_up < 1.0
-    assert len(pred.forecast_dates) == len(pred.forecast_mid) == len(pred.forecast_upper) == len(pred.forecast_lower)
+    assert pred.current_trend_label in ("Uptrend", "Sideways / Choppy", "Downtrend")
+    assert len(pred.current_trend_dates) == len(pred.current_trend_line) >= 2
+    assert len(pred.forecast_dates) == len(pred.forecast_mid) == len(pred.forecast_tech_only) == len(pred.forecast_upper) == len(pred.forecast_lower)
 
     plans = build_income_strategies(snap, chain, pred, budget=5000.0, risk_profile="Balanced")
     assert len(plans) == 4, f"Expected all 4 strategies, got {len(plans)}"

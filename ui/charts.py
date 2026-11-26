@@ -113,39 +113,47 @@ def build_forecast_chart(
     lang: str = "en",
     active_plan: OptionStrategyPlan | None = None,
 ) -> go.Figure:
-    """Interactive historical price + moving average + AI predicted price cone + Entry/Breakeven/Stop levels."""
+    """Interactive Current Trend vs. Predicted Trend (AI + Live News) plot with Entry/Breakeven/Stop levels."""
     is_ar = lang == "ar"
-    hist = snapshot.history.tail(90).copy()
+    hist = snapshot.history.tail(45).copy()
     dates = [d.strftime("%Y-%m-%d") for d in hist.index]
     closes = hist["Close"].round(2).tolist()
-    sma20 = hist["Close"].rolling(20).mean().round(2).tolist()
+    today_date = dates[-1] if dates else prediction.forecast_dates[0]
 
     fig = go.Figure()
 
+    # 1. Actual recent stock price
     fig.add_trace(
         go.Scatter(
             x=dates,
             y=closes,
-            name="سعر السهم الأخير" if is_ar else "Recent Stock Price",
+            name="سعر السهم الفعلي" if is_ar else "Actual Stock Price",
             mode="lines",
-            line=dict(color="#38BDF8", width=2.6),
+            line=dict(color="#38BDF8", width=2.4),
             fill="tozeroy",
             fillcolor="rgba(56, 189, 248, 0.08)",
             hovertemplate=("التاريخ: %{x}<br>السعر: <b>$%{y:,.2f}</b><extra></extra>" if is_ar else "Date: %{x}<br>Price: <b>$%{y:,.2f}</b><extra></extra>"),
         )
     )
 
-    fig.add_trace(
-        go.Scatter(
-            x=dates,
-            y=sma20,
-            name="متوسط 20 يوماً" if is_ar else "20-Day Trend",
-            mode="lines",
-            line=dict(color="#94A3B8", width=1.4, dash="dot"),
-            hovertemplate=("متوسط 20 يوماً: $%{y:,.2f}<extra></extra>" if is_ar else "20-Day Avg: $%{y:,.2f}<extra></extra>"),
+    # 2. Current 20-day actual trendline (linear slope)
+    if prediction.current_trend_dates and prediction.current_trend_line:
+        fig.add_trace(
+            go.Scatter(
+                x=prediction.current_trend_dates,
+                y=prediction.current_trend_line,
+                name=(
+                    f"الاتجاه الحالي ({prediction.current_trend_pct_20d:+.1f}%)"
+                    if is_ar
+                    else f"Current 20d Trend ({prediction.current_trend_pct_20d:+.1f}%)"
+                ),
+                mode="lines",
+                line=dict(color="#A78BFA", width=3.0),
+                hovertemplate=("خط الاتجاه الحالي: <b>$%{y:,.2f}</b><extra></extra>" if is_ar else "Current Trend Line: <b>$%{y:,.2f}</b><extra></extra>"),
+            )
         )
-    )
 
+    # 3. Forecast confidence range cone (~68%)
     fig.add_trace(
         go.Scatter(
             x=prediction.forecast_dates,
@@ -163,42 +171,85 @@ def build_forecast_chart(
             mode="lines",
             line=dict(width=0),
             fill="tonexty",
-            fillcolor="rgba(0, 212, 170, 0.18)",
-            name="النطاق السعري المتوقع (~68%)" if is_ar else "Expected Price Range (~68%)",
+            fillcolor="rgba(0, 212, 170, 0.16)",
+            name="النطاق المتوقع (~68%)" if is_ar else "Expected Range (~68%)",
             hovertemplate=("الحد الأدنى المتوقع: $%{y:,.2f}<extra></extra>" if is_ar else "Range Low: $%{y:,.2f}<extra></extra>"),
         )
     )
 
+    # 4. Technical-only baseline forecast (without news shift)
+    if prediction.forecast_tech_only and len(prediction.forecast_tech_only) == len(prediction.forecast_dates):
+        fig.add_trace(
+            go.Scatter(
+                x=prediction.forecast_dates,
+                y=prediction.forecast_tech_only,
+                name="توقع السعر فقط (بدون الأخبار)" if is_ar else "Price-Only Forecast (No News)",
+                mode="lines",
+                line=dict(color="#94A3B8", width=1.8, dash="dot"),
+                hovertemplate=("السعر فقط: $%{y:,.2f}<extra></extra>" if is_ar else "Price-Only: $%{y:,.2f}<extra></extra>"),
+            )
+        )
+
+    # 5. Bold Predicted Future Trend (AI + Live News)
+    pred_color = prediction.direction_color or "#00D4AA"
     fig.add_trace(
         go.Scatter(
             x=prediction.forecast_dates,
             y=prediction.forecast_mid,
-            name=(f"توقع الذكاء الاصطناعي ({prediction.horizon_days} يوم)" if is_ar else f"AI {prediction.horizon_days}-Day Forecast"),
+            name=(
+                f"الاتجاه المتوقع — AI + الأخبار ({prediction.expected_return_pct:+.1f}%)"
+                if is_ar
+                else f"Predicted Trend — AI + News ({prediction.expected_return_pct:+.1f}%)"
+            ),
             mode="lines+markers",
-            line=dict(color="#00D4AA", width=3.0, dash="dash"),
-            marker=dict(size=5, color="#00D4AA"),
-            hovertemplate=("تاريخ التوقع: %{x}<br>السعر المتوقع: <b>$%{y:,.2f}</b><extra></extra>" if is_ar else "Forecast Date: %{x}<br>Projected: <b>$%{y:,.2f}</b><extra></extra>"),
+            line=dict(color=pred_color, width=3.4),
+            marker=dict(size=6, color=pred_color),
+            hovertemplate=("التوقع (AI + الأخبار): <b>$%{y:,.2f}</b><extra></extra>" if is_ar else "Predicted (AI + News): <b>$%{y:,.2f}</b><extra></extra>"),
         )
     )
 
+    # Vertical "Today" divider separating Current Trend vs Future Prediction
+    fig.add_vline(
+        x=today_date,
+        line_color="rgba(226, 232, 240, 0.45)",
+        line_dash="dash",
+        line_width=1.4,
+    )
+    fig.add_annotation(
+        x=today_date,
+        y=1.03,
+        yref="paper",
+        text=("اليوم ◀ التوقع" if is_ar else "Today ▶ Forecast"),
+        showarrow=False,
+        font=dict(size=11, color="#CBD5E1"),
+    )
+
+    # End-of-forecast target price callout
+    if prediction.forecast_dates and prediction.forecast_mid:
+        fig.add_annotation(
+            x=prediction.forecast_dates[-1],
+            y=prediction.forecast_mid[-1],
+            text=f"<b>${prediction.predicted_price:,.2f}</b> ({prediction.expected_return_pct:+.1f}%)",
+            showarrow=True,
+            arrowhead=2,
+            arrowcolor=pred_color,
+            ax=18,
+            ay=-26,
+            bgcolor="#131D31",
+            bordercolor=pred_color,
+            borderwidth=1.2,
+            font=dict(size=11, color=pred_color),
+        )
+
     # Overlay Entry, Breakeven & Stop-Loss price levels from the active strategy!
     if active_plan is not None:
-        fig.add_hline(
-            y=active_plan.entry_stock_price,
-            line_color="#38BDF8",
-            line_dash="dot",
-            line_width=1.4,
-            annotation_text=(f"الدخول ${active_plan.entry_stock_price:,.2f}" if is_ar else f"Entry ${active_plan.entry_stock_price:,.2f}"),
-            annotation_position="top left",
-            annotation_font_color="#38BDF8",
-        )
         if active_plan.breakeven_low is not None:
             fig.add_hline(
                 y=active_plan.breakeven_low,
                 line_color="#FBBF24",
                 line_dash="dash",
-                line_width=1.8,
-                annotation_text=(f"نقطة التعادل ${active_plan.breakeven_low:,.2f}" if is_ar else f"Breakeven ${active_plan.breakeven_low:,.2f}"),
+                line_width=1.7,
+                annotation_text=(f"🟡 التعادل ${active_plan.breakeven_low:,.2f}" if is_ar else f"🟡 Breakeven ${active_plan.breakeven_low:,.2f}"),
                 annotation_position="bottom left",
                 annotation_font_color="#FBBF24",
             )
@@ -207,8 +258,8 @@ def build_forecast_chart(
                 y=active_plan.breakeven_high,
                 line_color="#FBBF24",
                 line_dash="dash",
-                line_width=1.8,
-                annotation_text=(f"التعادل العلوي ${active_plan.breakeven_high:,.2f}" if is_ar else f"Upper Breakeven ${active_plan.breakeven_high:,.2f}"),
+                line_width=1.7,
+                annotation_text=(f"🟡 التعادل العلوي ${active_plan.breakeven_high:,.2f}" if is_ar else f"🟡 Upper BE ${active_plan.breakeven_high:,.2f}"),
                 annotation_position="top right",
                 annotation_font_color="#FBBF24",
             )
@@ -217,18 +268,18 @@ def build_forecast_chart(
                 y=active_plan.stop_loss_stock_trigger,
                 line_color="#FB923C",
                 line_dash="dot",
-                line_width=1.6,
-                annotation_text=(f"تنبيه وقف الخسارة ${active_plan.stop_loss_stock_trigger:,.2f}" if is_ar else f"Stop-Loss Trigger ${active_plan.stop_loss_stock_trigger:,.2f}"),
+                line_width=1.5,
+                annotation_text=(f"🟠 وقف الخسارة ${active_plan.stop_loss_stock_trigger:,.2f}" if is_ar else f"🟠 Stop-Loss ${active_plan.stop_loss_stock_trigger:,.2f}"),
                 annotation_position="bottom right",
                 annotation_font_color="#FB923C",
             )
 
     title = (
-        f"مسار {snapshot.symbol} وتوقع الذكاء الاصطناعي مع نقاط الدخول والتعادل ({prediction.horizon_days} يوم)"
+        f"الاتجاه الحالي مقابل المتوقع (AI + الأخبار الحية) — {snapshot.symbol} ({prediction.horizon_days} يوم)"
         if is_ar
-        else f"{snapshot.symbol} Forecast Cone with Entry, Breakeven & Stop-Loss Levels ({prediction.horizon_days}d)"
+        else f"{snapshot.symbol}: Current Trend vs. Predicted Trend (AI + Live News, {prediction.horizon_days}d)"
     )
-    layout = _base_layout(title, height=420, lang=lang)
+    layout = _base_layout(title, height=430, lang=lang)
     layout["yaxis"]["tickprefix"] = "$"
     fig.update_layout(**layout)
     return fig
