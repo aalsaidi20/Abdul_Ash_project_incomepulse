@@ -154,7 +154,7 @@ if "selected_strategy_id" not in st.session_state:
 if "active_view" not in st.session_state:
     st.session_state["active_view"] = "scanner"
 if "lang" not in st.session_state:
-    st.session_state["lang"] = "ar"
+    st.session_state["lang"] = "en"
 
 
 # ---------------------------------------------------------------------------
@@ -162,13 +162,13 @@ if "lang" not in st.session_state:
 # ---------------------------------------------------------------------------
 with st.sidebar:
     lang_choice = st.radio(
-        "🌐 اللغة / Language",
-        options=["ar", "en"],
-        format_func=lambda code: "العربية (Arabic)" if code == "ar" else "English",
+        "🌐 Language / اللغة",
+        options=["en", "ar"],
+        format_func=lambda code: "English" if code == "en" else "العربية (Arabic)",
         horizontal=True,
         key="lang",
     )
-    lang = lang_choice or "ar"
+    lang = lang_choice or "en"
 
 # Inject LTR or RTL theme CSS immediately after reading language state
 st.markdown(get_theme_css(lang), unsafe_allow_html=True)
