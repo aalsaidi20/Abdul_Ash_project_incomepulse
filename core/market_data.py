@@ -206,20 +206,22 @@ def fetch_stock_snapshot(symbol: str, period: str = "1y") -> StockSnapshot:
                         hist.iloc[-1, hist.columns.get_loc("Close")] = float(fast.last_price)
                 except Exception:
                     pass
-                try:
-                    cal = ticker.calendar
-                    if isinstance(cal, dict) and "Earnings Date" in cal:
-                        edates = cal["Earnings Date"]
-                        if isinstance(edates, list) and edates:
-                            ed = edates[0]
-                            if isinstance(ed, dt.datetime):
-                                ed = ed.date()
-                            if isinstance(ed, dt.date):
-                                diff = (ed - dt.date.today()).days
-                                if -1 <= diff <= 90:
-                                    next_earnings_days = diff
-                except Exception:
-                    pass
+                # Skip earnings calendar lookup for ETFs (ETFs don't have earnings — avoids 404 latency)
+                if "ETF" not in info.category.upper():
+                    try:
+                        cal = ticker.calendar
+                        if isinstance(cal, dict) and "Earnings Date" in cal:
+                            edates = cal["Earnings Date"]
+                            if isinstance(edates, list) and edates:
+                                ed = edates[0]
+                                if isinstance(ed, dt.datetime):
+                                    ed = ed.date()
+                                if isinstance(ed, dt.date):
+                                    diff = (ed - dt.date.today()).days
+                                    if -1 <= diff <= 90:
+                                        next_earnings_days = diff
+                    except Exception:
+                        pass
         except Exception:
             is_live = False
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from urllib.parse import quote_plus
@@ -163,35 +164,38 @@ def _fetch_fred_yoy(series_id: str, timeout: int = 6) -> Optional[float]:
         return None
 
 
+def _fetch_yf_last(symbol: str) -> Optional[float]:
+    if yf is None:
+        return None
+    try:
+        hist = yf.Ticker(symbol).history(period="5d")
+        if hist is not None and not hist.empty:
+            return round(float(hist["Close"].iloc[-1]), 2)
+    except Exception:
+        pass
+    return None
+
+
 def fetch_macro_environment() -> MacroEnvironment:
-    """Gather free live macroeconomic & volatility indicators (VIX, Yields, FRED)."""
-    is_live = False
-    vix = 17.5
-    t10y = 4.25
+    """Gather free live macroeconomic & volatility indicators concurrently for fast load."""
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        f_vix = pool.submit(_fetch_yf_last, "^VIX")
+        f_t10 = pool.submit(_fetch_yf_last, "^TNX")
+        f_dff = pool.submit(_fetch_fred_latest, "DFF", 4)
+        f_yc = pool.submit(_fetch_fred_latest, "T10Y2Y", 4)
+        f_unemp = pool.submit(_fetch_fred_latest, "UNRATE", 4)
+        f_cpi = pool.submit(_fetch_fred_yoy, "CPIAUCSL", 4)
 
-    if yf is not None:
-        try:
-            vix_hist = yf.Ticker("^VIX").history(period="5d")
-            if vix_hist is not None and not vix_hist.empty:
-                vix = round(float(vix_hist["Close"].iloc[-1]), 2)
-                is_live = True
-        except Exception:
-            pass
-        try:
-            tnx_hist = yf.Ticker("^TNX").history(period="5d")
-            if tnx_hist is not None and not tnx_hist.empty:
-                t10y = round(float(tnx_hist["Close"].iloc[-1]), 2)
-                is_live = True
-        except Exception:
-            pass
+        vix_live = f_vix.result()
+        t10_live = f_t10.result()
+        fed_funds = f_dff.result()
+        yc_10_2 = f_yc.result()
+        unemp = f_unemp.result()
+        cpi_yoy = f_cpi.result()
 
-    fed_funds = _fetch_fred_latest("DFF")
-    yc_10_2 = _fetch_fred_latest("T10Y2Y")
-    unemp = _fetch_fred_latest("UNRATE")
-    cpi_yoy = _fetch_fred_yoy("CPIAUCSL")
-
-    if any(x is not None for x in (fed_funds, yc_10_2, unemp, cpi_yoy)):
-        is_live = True
+    is_live = any(x is not None for x in (vix_live, t10_live, fed_funds, yc_10_2, unemp, cpi_yoy))
+    vix = vix_live if vix_live is not None else 17.5
+    t10y = t10_live if t10_live is not None else 4.25
 
     fed_funds_val = round(fed_funds, 2) if fed_funds is not None else 4.50
     yc_val = round(yc_10_2, 2) if yc_10_2 is not None else 0.15
@@ -252,12 +256,12 @@ def fetch_macro_environment() -> MacroEnvironment:
     )
 
 
-def _parse_rss(url: str, source_name: str, category: str, limit: int = 6) -> List[NewsItem]:
+def _parse_rss(url: str, source_name: str, category: str, limit: int = 6, timeout: int = 4) -> List[NewsItem]:
     items: List[NewsItem] = []
     if feedparser is None:
         return items
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=6)
+        resp = requests.get(url, headers=HEADERS, timeout=timeout)
         if resp.status_code != 200:
             return items
         feed = feedparser.parse(resp.content)
@@ -290,51 +294,28 @@ def _parse_rss(url: str, source_name: str, category: str, limit: int = 6) -> Lis
 
 
 def fetch_live_news_and_events(symbol: str, max_items: int = 12) -> tuple[List[NewsItem], float, bool]:
-    """Pull 100% free public headlines for ticker + macro environment + SEC 8-K live feed."""
+    """Pull 100% free public headlines concurrently for ticker + macro + SEC 8-K live feed."""
     sym = symbol.upper().strip()
-    all_items: List[NewsItem] = []
-
-    # 1. Google News RSS for ticker (100% free, live)
     q_ticker = quote_plus(f"{sym} stock options market")
-    all_items.extend(
-        _parse_rss(
-            f"https://news.google.com/rss/search?q={q_ticker}&hl=en-US&gl=US&ceid=US:en",
-            "Google News",
-            "Ticker",
-            limit=6,
-        )
-    )
-
-    # 2. Yahoo Finance RSS for ticker (100% free)
-    all_items.extend(
-        _parse_rss(
-            f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={sym}&region=US&lang=en-US",
-            "Yahoo Finance",
-            "Ticker",
-            limit=5,
-        )
-    )
-
-    # 3. Broader market / Fed / economy live news RSS
     q_macro = quote_plus("Federal Reserve stock market economy inflation")
-    all_items.extend(
-        _parse_rss(
-            f"https://news.google.com/rss/search?q={q_macro}&hl=en-US&gl=US&ceid=US:en",
-            "Macro News",
-            "Macro",
-            limit=4,
-        )
-    )
 
-    # 4. SEC EDGAR live 8-K current reports RSS (public corporate material events)
-    all_items.extend(
-        _parse_rss(
+    feeds = [
+        (f"https://news.google.com/rss/search?q={q_ticker}&hl=en-US&gl=US&ceid=US:en", "Google News", "Ticker", 6),
+        (f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={sym}&region=US&lang=en-US", "Yahoo Finance", "Ticker", 5),
+        (f"https://news.google.com/rss/search?q={q_macro}&hl=en-US&gl=US&ceid=US:en", "Macro News", "Macro", 4),
+        (
             "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&CIK=&type=8-K&company=&dateb=&owner=include&start=0&count=10&output=atom",
             "SEC EDGAR 8-K",
             "SEC Filing",
-            limit=3,
-        )
-    )
+            3,
+        ),
+    ]
+
+    all_items: List[NewsItem] = []
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futs = [pool.submit(_parse_rss, url, src, cat, lim, 4) for url, src, cat, lim in feeds]
+        for fut in futs:
+            all_items.extend(fut.result())
 
     # Deduplicate by normalized title prefix
     seen = set()

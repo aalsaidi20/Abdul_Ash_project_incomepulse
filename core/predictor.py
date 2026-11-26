@@ -97,6 +97,7 @@ def predict_stock_movement(
     horizon_days: int = 7,
     news_sentiment: float = 0.0,
     vix: float = 18.0,
+    fast_mode: bool = False,
 ) -> MarketPrediction:
     """Train a fast walk-forward ML ensemble on historical data and blend with live news & VIX."""
     trading_horizon = max(1, min(22, int(round(horizon_days * 5.0 / 7.0))))
@@ -125,17 +126,18 @@ def predict_stock_movement(
         y_up_train, y_up_test = y_up_all.iloc[:split], y_up_all.iloc[split:]
         y_ret_train = y_ret_all.iloc[:split]
 
+        n_est = 32 if fast_mode else 65
         clf = GradientBoostingClassifier(
-            n_estimators=70,
+            n_estimators=n_est,
             max_depth=3,
-            learning_rate=0.05,
+            learning_rate=0.06 if fast_mode else 0.05,
             subsample=0.85,
             random_state=42,
         )
         reg = GradientBoostingRegressor(
-            n_estimators=70,
+            n_estimators=n_est,
             max_depth=3,
-            learning_rate=0.05,
+            learning_rate=0.06 if fast_mode else 0.05,
             subsample=0.85,
             random_state=42,
         )

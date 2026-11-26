@@ -9,8 +9,15 @@ from typing import List
 import pandas as pd
 import streamlit as st
 
+st.set_page_config(
+    page_title="IncomePulse — AI Stock & Options Income Studio",
+    page_icon="💎",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
 # Ensure Streamlit Cloud hot-reloads pick up updated core/ui submodules cleanly
-_APP_BUILD = "2026-11-26-v3"
+_APP_BUILD = "2026-11-26-v4"
 if st.session_state.get("_loaded_build") != _APP_BUILD:
     for _mod in list(sys.modules):
         if _mod == "core" or _mod.startswith("core.") or _mod == "ui" or _mod.startswith("ui."):
@@ -22,7 +29,12 @@ from core.macro_news import MacroEnvironment, NewsItem, fetch_live_news_and_even
 from core.market_data import OptionChainData, StockSnapshot, fetch_option_chain, fetch_stock_snapshot
 from core.options_engine import OptionStrategyPlan, build_income_strategies
 from core.predictor import MarketPrediction, predict_stock_movement
-from core.scanner import ScanOpportunity, opportunities_to_dataframe, run_income_scanner
+from core.scanner import (
+    ScanOpportunity,
+    fetch_scanner_market_bundle,
+    opportunities_to_dataframe,
+    rank_opportunities_from_bundle,
+)
 from core.universe import CADENCE_CONFIG, INCOME_UNIVERSE, get_ticker_info
 from ui.charts import (
     build_forecast_chart,
@@ -49,34 +61,39 @@ from ui.i18n import (
 )
 from ui.styles import get_theme_css
 
-st.set_page_config(
-    page_title="IncomePulse — AI Stock & Options Income Studio",
-    page_icon="💎",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
 
 # ---------------------------------------------------------------------------
 # Cached Zero-Cost Live Data Loaders (keeps the dashboard silky fast!)
 # ---------------------------------------------------------------------------
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def load_macro() -> MacroEnvironment:
     return fetch_macro_environment()
 
 
-@st.cache_data(ttl=240, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
+def load_scanner_bundle(cadence: str):
+    """Cache raw scanner market data independent of budget & risk sliders for instant interactivity."""
+    macro = load_macro()
+    return fetch_scanner_market_bundle(cadence, vix=macro.vix)
+
+
 def load_scanner(cadence: str, budget: float, risk_profile: str) -> List[ScanOpportunity]:
     macro = load_macro()
-    return run_income_scanner(cadence, budget, risk_profile, macro)
+    bundle = load_scanner_bundle(cadence)
+    return rank_opportunities_from_bundle(
+        bundle,
+        budget=budget,
+        risk_profile=risk_profile,
+        risk_free_rate=max(0.01, macro.treasury_10y / 100.0),
+    )
 
 
-@st.cache_data(ttl=180, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_stock(symbol: str) -> StockSnapshot:
     return fetch_stock_snapshot(symbol, period="1y")
 
 
-@st.cache_data(ttl=180, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_chain(symbol: str, spot: float, iv: float, min_dte: int, max_dte: int, target_dte: int, exp: str = "") -> OptionChainData:
     return fetch_option_chain(
         symbol,
@@ -89,9 +106,15 @@ def load_chain(symbol: str, spot: float, iv: float, min_dte: int, max_dte: int, 
     )
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_news(symbol: str) -> tuple[List[NewsItem], float, bool]:
     return fetch_live_news_and_events(symbol, max_items=12)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_prediction(symbol: str, horizon_days: int, news_sentiment: float, vix: float) -> MarketPrediction:
+    snap = load_stock(symbol)
+    return predict_stock_movement(snap, horizon_days=horizon_days, news_sentiment=news_sentiment, vix=vix)
 
 
 def _md_bold_to_html(text: str) -> str:
@@ -336,8 +359,8 @@ with st.spinner(tr(lang, "spinner_ticker", symbol=symbol)):
         max_dte=cadence_cfg["max_dte"],
         target_dte=cadence_cfg["target_dte"],
     )
-    prediction = predict_stock_movement(
-        snapshot,
+    prediction = load_prediction(
+        symbol,
         horizon_days=chain.dte,
         news_sentiment=news_sentiment,
         vix=macro.vix,

@@ -1,14 +1,14 @@
-"""Multi-ticker repetitive income opportunity scanner (Daily / Weekly / Monthly)."""
+"""Multi-ticker repetitive income opportunity scanner (fast 2-stage cacheable design)."""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import pandas as pd
 
 from core.macro_news import MacroEnvironment
-from core.market_data import fetch_option_chain, fetch_stock_snapshot
+from core.market_data import OptionChainData, StockSnapshot, fetch_option_chain, fetch_stock_snapshot
 from core.options_engine import OptionStrategyPlan, build_income_strategies
 from core.predictor import MarketPrediction, predict_stock_movement
 from core.universe import CADENCE_CONFIG, get_ticker_info
@@ -46,16 +46,13 @@ class ScanOpportunity:
     plain_pitch: str
 
 
-def _scan_single(
+def _fetch_one_bundle(
     symbol: str,
     min_dte: int,
     max_dte: int,
     target_dte: int,
-    budget: float,
-    risk_profile: str,
     vix: float,
-    risk_free_rate: float,
-) -> Optional[ScanOpportunity]:
+) -> Optional[Tuple[StockSnapshot, OptionChainData, MarketPrediction]]:
     try:
         snap = fetch_stock_snapshot(symbol, period="6mo")
         chain = fetch_option_chain(
@@ -66,51 +63,100 @@ def _scan_single(
             max_dte=max_dte,
             target_dte=target_dte,
         )
-        pred = predict_stock_movement(snap, horizon_days=chain.dte, news_sentiment=0.0, vix=vix)
-        plans = build_income_strategies(
-            snap,
-            chain,
-            pred,
-            budget=budget,
-            risk_profile=risk_profile,
-            risk_free_rate=risk_free_rate,
-        )
-        if not plans:
-            return None
-        best: OptionStrategyPlan = plans[0]
-        info = get_ticker_info(symbol)
-        return ScanOpportunity(
-            symbol=snap.symbol,
-            name=info.name,
-            category=info.category,
-            cadence=info.cadence,
-            price=snap.price,
-            change_pct=snap.change_pct,
-            iv_rank=snap.iv_rank,
-            direction_label=pred.direction_label,
-            prob_up_pct=round(pred.prob_up * 100.0, 0),
-            best_strategy=best.strategy_name,
-            strategy_id=best.strategy_id,
-            expiration=best.expiration,
-            dte=best.dte,
-            upfront_cash=best.upfront_cash,
-            max_risk=best.max_risk,
-            capital_required=best.capital_required,
-            breakeven_low=best.breakeven_low,
-            take_profit_dollars=best.take_profit_dollars,
-            stop_loss_dollars=best.stop_loss_dollars,
-            weekly_yield_pct=best.weekly_yield_pct,
-            annualized_yield_pct=best.annualized_yield_pct,
-            win_prob_pct=best.prob_of_profit_pct,
-            safety_score=best.safety_score,
-            risk_level=best.risk_level,
-            fits_budget=best.fits_budget,
-            earnings_soon=bool(best.earnings_warning),
-            is_live=snap.is_live and chain.is_live,
-            plain_pitch=best.plain_tagline,
-        )
+        pred = predict_stock_movement(snap, horizon_days=chain.dte, news_sentiment=0.0, vix=vix, fast_mode=True)
+        return (snap, chain, pred)
     except Exception:
         return None
+
+
+def fetch_scanner_market_bundle(
+    cadence_label: str,
+    vix: float,
+    symbols: Optional[List[str]] = None,
+) -> List[Tuple[StockSnapshot, OptionChainData, MarketPrediction]]:
+    """Stage 1 (cacheable): Fetch prices, option chains & ML forecasts independent of budget/risk."""
+    cfg = CADENCE_CONFIG.get(cadence_label, list(CADENCE_CONFIG.values())[1])
+    target_symbols = symbols or cfg["preferred_symbols"]
+
+    bundles: List[Tuple[StockSnapshot, OptionChainData, MarketPrediction]] = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {
+            pool.submit(
+                _fetch_one_bundle,
+                sym,
+                cfg["min_dte"],
+                cfg["max_dte"],
+                cfg["target_dte"],
+                vix,
+            ): sym
+            for sym in target_symbols
+        }
+        for fut in as_completed(futures):
+            res = fut.result()
+            if res is not None:
+                bundles.append(res)
+    return bundles
+
+
+def rank_opportunities_from_bundle(
+    bundles: List[Tuple[StockSnapshot, OptionChainData, MarketPrediction]],
+    budget: float,
+    risk_profile: str,
+    risk_free_rate: float = 0.045,
+) -> List[ScanOpportunity]:
+    """Stage 2 (instant in-memory): Re-size & rank strategies in milliseconds when budget/risk changes."""
+    results: List[ScanOpportunity] = []
+    for snap, chain, pred in bundles:
+        try:
+            plans = build_income_strategies(
+                snap,
+                chain,
+                pred,
+                budget=budget,
+                risk_profile=risk_profile,
+                risk_free_rate=risk_free_rate,
+            )
+            if not plans:
+                continue
+            best: OptionStrategyPlan = plans[0]
+            info = get_ticker_info(snap.symbol)
+            results.append(
+                ScanOpportunity(
+                    symbol=snap.symbol,
+                    name=info.name,
+                    category=info.category,
+                    cadence=info.cadence,
+                    price=snap.price,
+                    change_pct=snap.change_pct,
+                    iv_rank=snap.iv_rank,
+                    direction_label=pred.direction_label,
+                    prob_up_pct=round(pred.prob_up * 100.0, 0),
+                    best_strategy=best.strategy_name,
+                    strategy_id=best.strategy_id,
+                    expiration=best.expiration,
+                    dte=best.dte,
+                    upfront_cash=best.upfront_cash,
+                    max_risk=best.max_risk,
+                    capital_required=best.capital_required,
+                    breakeven_low=best.breakeven_low,
+                    take_profit_dollars=best.take_profit_dollars,
+                    stop_loss_dollars=best.stop_loss_dollars,
+                    weekly_yield_pct=best.weekly_yield_pct,
+                    annualized_yield_pct=best.annualized_yield_pct,
+                    win_prob_pct=best.prob_of_profit_pct,
+                    safety_score=best.safety_score,
+                    risk_level=best.risk_level,
+                    fits_budget=best.fits_budget,
+                    earnings_soon=bool(best.earnings_warning),
+                    is_live=snap.is_live and chain.is_live,
+                    plain_pitch=best.plain_tagline,
+                )
+            )
+        except Exception:
+            continue
+
+    results.sort(key=lambda r: (r.fits_budget, not r.earnings_soon, r.safety_score, r.weekly_yield_pct), reverse=True)
+    return results
 
 
 def run_income_scanner(
@@ -120,34 +166,10 @@ def run_income_scanner(
     macro: MacroEnvironment,
     symbols: Optional[List[str]] = None,
 ) -> List[ScanOpportunity]:
-    """Scan all high-liquidity daily/weekly tickers concurrently and rank top income setups."""
-    cfg = CADENCE_CONFIG.get(cadence_label, list(CADENCE_CONFIG.values())[1])
-    target_symbols = symbols or cfg["preferred_symbols"]
+    """Full 2-stage scan (fetches market bundle + ranks strategies)."""
+    bundles = fetch_scanner_market_bundle(cadence_label, vix=macro.vix, symbols=symbols)
     rfr = max(0.01, macro.treasury_10y / 100.0)
-
-    results: List[ScanOpportunity] = []
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        futures = {
-            pool.submit(
-                _scan_single,
-                sym,
-                cfg["min_dte"],
-                cfg["max_dte"],
-                cfg["target_dte"],
-                budget,
-                risk_profile,
-                macro.vix,
-                rfr,
-            ): sym
-            for sym in target_symbols
-        }
-        for fut in as_completed(futures):
-            res = fut.result()
-            if res is not None:
-                results.append(res)
-
-    results.sort(key=lambda r: (r.fits_budget, not r.earnings_soon, r.safety_score, r.weekly_yield_pct), reverse=True)
-    return results
+    return rank_opportunities_from_bundle(bundles, budget=budget, risk_profile=risk_profile, risk_free_rate=rfr)
 
 
 def opportunities_to_dataframe(opps: List[ScanOpportunity]) -> pd.DataFrame:
