@@ -3,10 +3,20 @@ from __future__ import annotations
 
 import html
 import re
+import sys
 from typing import List
 
 import pandas as pd
 import streamlit as st
+
+# Ensure Streamlit Cloud hot-reloads pick up updated core/ui submodules cleanly
+_APP_BUILD = "2026-11-26-v3"
+if st.session_state.get("_loaded_build") != _APP_BUILD:
+    for _mod in list(sys.modules):
+        if _mod == "core" or _mod.startswith("core.") or _mod == "ui" or _mod.startswith("ui."):
+            del sys.modules[_mod]
+    st.cache_data.clear()
+    st.session_state["_loaded_build"] = _APP_BUILD
 
 from core.macro_news import MacroEnvironment, NewsItem, fetch_live_news_and_events, fetch_macro_environment
 from core.market_data import OptionChainData, StockSnapshot, fetch_option_chain, fetch_stock_snapshot
